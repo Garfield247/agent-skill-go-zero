@@ -5,21 +5,23 @@ description: >-
   涵盖 goctl 契约生成边界、API / gRPC RPC 设计、Handler / Logic / ServiceContext / Model 分层职责、
   GORM / MySQL / MongoDB / Redis 数据库与缓存最佳实践、Goroutine Panic 拦截与并发安全红线、
   枚举三层映射、单文件行数与上帝文件拆分红线、主流统一响应与分页规范、异步 Worker 控制面、
-  防吞异常五大场景、按月分表自愈、Redis Lua 分布式锁、Docker 容器化与 CI/CD 交付标准。
+  双触发批量刷盘与 Redis ZSet 零慢查巡检、长连接网关与 SeqID 发号冷启动自愈、3 步 ACK 闭环、
+  全链路 ULID 追踪与 5 大日志分流、防吞异常五大场景、按月分表自愈、Redis Lua 分布式锁、
+  Docker 容器化与优雅停机 (Graceful Shutdown) 交付标准。
 ---
 
 # Go 语言与 go-zero 微服务架构开发技能规范 (Go-Zero Development Skill)
 
 ## 概述 (Overview)
 
-本技能为 AI 代理（AI Coding Agents）及研发工程师在基于 **go-zero** 框架开发、重构、审查、排查或扩展 Go 语言微服务时，提供严密且符合工业级生产标准的架构设计准则与工程红线。
+本技能为 AI 代理（AI Coding Agents）及研发工程师在基于 **go-zero** 框架开发、重构、审查、排查或扩展 Go 语言微服务系统时，提供权威、严密且符合工业级生产标准的架构设计准则与工程红线。
 
 ### 核心设计原则
 
 1. **既有项目代码是第一事实来源 (Primary Source of Truth)**：优先遵循并对齐当前项目已建立的代码组织架构与命名约定。
 2. **坚持 Go 与 go-zero 惯用模式 (Idiomatic Patterns)**：采用地道的 Go 语言语法与 go-zero 官方推荐的分层架构。
 3. **严守代码生成边界 (Generated Code Boundaries)**：尊重 `goctl` 的代码生成体系，自动生成的代码一律只读，坚决杜绝手工随意篡改。
-4. **拒绝上帝文件 (No God Files)**：严格执行单一职责原则，单文件建议 200~300 行，超过 500 行必须重构拆分；一个 API 接口严格对应一个独立的 Logic 文件。
+4. **拒绝上帝文件 (No God Files)**：严格执行单一职责原则，单文件建议 200~300 行，超过 500 行必须重构拆分；一个 API 接口严格对应一个独立 Logic 文件。
 5. **最小化非必要变更 (Minimal Changes)**：恪守原子化修改原则，坚决不做无关重构与大面积全库格式化。
 6. **保持向后兼容 (Backward Compatibility)**：除非用户明确要求破坏性变更，否则必须确保对外 API、RPC 与数据结构的向后兼容。
 7. **优先复用既有抽象 (Reuse Existing Utilities)**：引入新库、工具函数或数据结构前，必须先在代码库中搜索复用既有实现。
@@ -31,8 +33,8 @@ description: >-
 - **Core Framework**: go-zero, goctl
 - **Protocols**: RESTful HTTP API, gRPC / zrpc, Protocol Buffers (v3), WebSocket
 - **Data Persistence**: GORM / GORM Gen, goctl model (sqlc), MySQL (utf8mb4), MongoDB
-- **Caching & Locking**: Redis (TTL / Lua 分布式锁)
-- **Infra & DevOps**: Docker (Multi-stage build), GitLab CI / GitHub Actions, Kubernetes
+- **Caching & Locking**: Redis (TTL / Lua 分布式锁 / ZSet 延时队列)
+- **Infra & DevOps**: Docker (Multi-stage build & Graceful Shutdown), GitLab CI / GitHub Actions, Kubernetes
 
 ---
 
@@ -43,7 +45,7 @@ description: >-
 在动手修改或创建任何代码之前，必须先按以下顺序执行调研：
 
 1. **审视仓库结构**：梳理各微服务的目录划分方式（单体多服务 Monorepo 还是独立服务拆分）。
-2. **查阅项目规范**：阅读仓库中的 `README.md`、`AGENTS.md`、`CONTRIBUTING.md` 或项目文档。
+2. **查阅项目规范**：阅读仓库中的 `README.md`、`AGENTS.md`、`CONTRIBUTING.md` 或项目技术文档。
 3. **定位契约定义**：找到目标接口所在的 `.api`（HTTP 路由）或 `.proto`（RPC 协议）定义文件。
 4. **梳理代码分层**：定位对应的 Handler、Logic、ServiceContext 与 Model 层文件。
 5. **参考类似实现**：在代码库中检索相似接口或相近业务逻辑的实现范式。
@@ -139,6 +141,7 @@ Model / Database (持久化层)
 ├── pkg/                           # 全局通用基础设施与支撑包
 │   ├── enums/                     # 领域枚举强类型包 (按领域拆分独立文件)
 │   ├── types/                     # 跨服务共享的内存模型与业务实体
+│   ├── ctxdata/                   # Context 上下文安全萃取器 (强类型读取)
 │   ├── errorx/                    # 统一业务异常与错误码体系
 │   └── shard/                     # 分表分库路由工具
 │
@@ -302,8 +305,7 @@ Model / Database (持久化层)
 | **`page`** | `int` | 当前页码（从 1 开始） |
 | **`page_size`** | `int` | 每页条数（对应请求入参 `page_size`） |
 | **`total`** | `int64` | 满足条件的总记录条数 |
-| **`total_pages`** | `int` | 总页数（$\lceil 	ext{total} / 	ext{page\_size} 
-ceil$） |
+| **`total_pages`** | `int` | 总页数（$\lceil \text{total} / \text{page\_size} \rceil$） |
 | **`list`** | `array` | 当前页实体记录列表数组（无数据时返回空数组 `[]`，严禁返回 `null`） |
 
 > **注**：若当前企业既有项目约定使用 Laravel/Django 风格的深度翻页结构（含 `current_page`, `per_page`, `first_page_url`, `last_page_url` 等导航 URL），**严格按既有项目约定为准**。新建立项推荐上述轻量通用标准。
@@ -697,11 +699,29 @@ if count, err := l.svcCtx.WsRouter.PushToTarget(ctx, targetID, payload); err != 
 
 ---
 
-# 19. Context 上下文传递规范 (Context Propagation)
+# 19. Context 上下文传递与强类型萃取规范 (`pkg/ctxdata`)
 
 1. **显式第一参数传递**：所有涉及网络 I/O、RPC 调用、数据库操作的方法，必须将 `ctx context.Context` 作为方法的第一个参数；
 2. **严禁上下文断流**：在请求处理链路中，**严禁无故使用 `context.Background()`** 替代上游传递的 `r.Context()` 或 `l.ctx`，否则链路追踪 TraceID 与超时取消彻底失效；
-3. **禁止将 Context 存在长期结构体内部**，禁止使用 `context.WithValue` 传递核心业务参数。
+3. **强类型上下文萃取器 (`pkg/ctxdata`)**：
+   - 严禁在业务 Logic 中直接手写 `ctx.Value("user_id").(string)` 裸类型断言（类型不匹配或 key 缺失会直接触发 panic 崩溃）；
+   - 统一在 `pkg/ctxdata` 中封装类型安全的方法：
+     ```go
+     package ctxdata
+
+     func GetUserID(ctx context.Context) (int64, bool) {
+         val, ok := ctx.Value(CtxKeyUserID).(int64)
+         return val, ok
+     }
+
+     func GetTenantID(ctx context.Context) (int64, bool) {
+         val, ok := ctx.Value(CtxKeyTenantID).(int64)
+         return val, ok
+     }
+     ```
+4. **网关安全与头注入校验**：
+   - 外部网关（API Gateway）鉴权通过后注入私有请求头（如 `X-User-ID`, `X-Tenant-ID`）；
+   - 后端微服务拦截器必须验证请求来源合法性，严防外部恶意公网流量直连伪造内部头造成水平越权。
 
 ---
 
@@ -735,31 +755,136 @@ for _, item := range list {
 
 ---
 
-# 21. 异步 Worker 服务的控制面标准 (Worker Control Plane)
+# 21. 异步 Worker 服务的控制面与高吞吐批处理引擎
 
 > 🚨 **架构规范**：
-> 异步 Worker / 后台巡检 Daemon 进程在生产架构中**绝不允许退化为孤立的裸脚本进程**，必须具备标准的 HTTP 控制面契约（`worker.api`）。
+> 异步 Worker / 后台巡检 Daemon 进程在生产架构中**绝不允许退化为孤立的裸脚本进程**，必须具备标准的 HTTP 控制面契约（`worker.api`）与生产级批处理引擎。
 
-1. **容器健康检查探针**：
-   - `/worker/health`、`/worker/ping`：为 Kubernetes 提供存活（Liveness）与就绪（Readiness）探针支持，确保异常时自动重启自愈；
+### 21.1 容器健康探针与控制面
+1. **健康检查端点**：
+   - `/worker/health`、`/worker/ping`：为 Kubernetes 提供存活（Liveness）与就绪（Readiness）探针支持，异常时自动重启自愈；
 2. **运维管理与手动触发端点**：
    - `/worker/admin/trigger/archive`：线上任务积压时，供运维手动强制触发巡检归档；
-   - `/worker/admin/trigger/flush`：紧急停机前，手动触发内存通道残余消息批量刷盘落库；
-   - `/worker/admin/trigger/table-provision`：手动预建指定月份的物理分表；
-3. **任务流水线融合**：
-   - 依赖项统一通过 `ServiceContext` 管理；
-   - 异步计算流水线（Flusher 刷盘、Archiver 归档、Cron 定时）作为常驻 Goroutine 在启动时拉起。
+   - `/worker/admin/trigger/flush`：紧急停机前，手动触发内存通道残余批量刷盘落库；
+   - `/worker/admin/trigger/table-provision`：手动预建指定月份的物理分表。
+
+### 21.2 高吞吐批量异步削峰刷盘流水线 (Double-Trigger Batch Flusher)
+针对高频写入场景（如实时聊天消息、行为埋点、操作流水），单条直接打库会打满 MySQL 连接池并导致 IOPS 耗尽。必须采用**双触发批量刷盘流水线**：
+
+```text
+生产写入 (Logic / RPC)
+  ↓ 非阻塞投递
+内存缓冲 Channel (chan Item, 容量 10000)
+  ↓
+Worker Batch Flusher
+  ├── 条件 1: 缓冲条数达到 batch_size (如 200 条) → 触发批量 INSERT
+  └── 条件 2: 计时达到 flush_interval (如 200ms) → 即使不足 200 条也强制落库
+```
+
+- **优雅停机排空 (Graceful Drain & Flush)**：服务收到 `SIGTERM` 时，先关闭输入 Channel，将当前缓冲区内的残余消息全部批量写入数据库后再退出，**实现零数据丢失**。
+
+### 21.3 零 MySQL 慢查的定时巡检引擎 (Zero-Slow-Query with Redis ZSet)
+- **痛点反模式**：严禁在数百万级的大表上运行周期性定时扫描（如 `SELECT ... WHERE status = 1 AND updated_at < ...`），这会导致严重的慢查询与行锁冲突；
+- **标准范式**：使用 **Redis ZSet 时间轴索引**（Member 为业务主键，Score 为到期截止时间戳）：
+  - 定时轮询调用 `ZRangeByScoreWithScores` 拉取已超时的少量任务（如 `LIMIT 0, 100`）；
+  - 业务处理完成（如状态变更、资源释放）后，原子调用 `ZRem` 移出时间轴；
+  - 全程对 MySQL 保持零周期性慢查。
 
 ---
 
-# 22. 多租户系统隔离规范 (Multi-Tenant Systems)
+# 22. 长连接网关与实时通信架构规范 (Real-Time Gateway & Messaging)
+
+针对 WebSocket 长连接、IM 实时聊天或实时状态机推送服务：
+
+### 22.1 单调递增序号发号器与冷启动自愈 (Monotonic SeqID & Recovery)
+- **严格保序需求**：同一个会话或频道的连续消息，必须具备绝对严格单调递增的序列号（`seq_id`），防范网络乱序；
+- **Redis INCR 驱动**：正常状态下通过 Redis 原生 `INCR {project}:seq:{channel_id}` 高性能发号；
+- **DB 回源原子冷启动自愈 (Recovery)**：
+  - 若 Redis 发生内存淘汰、服务重启或跨数月后重新激活旧会话，发号器缓存缺失；
+  - **严禁直接从 1 开始发号**（会导致序号倒挂或主键冲突！）；
+  - 必须查询数据库中当前频道的最大序号 `SELECT COALESCE(MAX(seq_id), 0) FROM messages WHERE channel_id = ?`；
+  - 通过 Redis Lua 脚本原子性初始化发号器水位（仅当 Key 不存在时 SET 并附加 TTL），随后继续递增自增，实现无感自愈。
+
+### 22.2 客户端消息幂等与 3 步 ACK 闭环 (3-Step ACK)
+1. **客户端生成 `client_msg_id`（UUID）**：作为上行请求幂等凭据，服务端通过 Redis / 唯一索引校验，防止网络超时重试导致消息重复入库；
+2. **3 步 ACK 状态机**：
+   - **Step 1: Server ACK**：服务端接收并持久化成功，立即返回该消息服务端分配的唯一 ID 与 SeqID（前端状态置为“已发送”）；
+   - **Step 2: Peer Delivered ACK**：对端长连接在线并成功推流投递（前端状态置为“已送达”）；
+   - **Step 3: Read ACK**：对端用户打开窗口产生已读行为，上报已读游标，更新未读数（前端状态置为“已读”）。
+
+### 22.3 长连接生命周期与多端互斥踢下线 (Kick-out)
+1. **多端互斥策略**：当同一账号在另一台新设备建立长连接时，网关检测到已存在旧连接，必须向旧连接发送 `kick_out` 帧（告知原因），随后优雅主动断开旧 Socket，将在线路由指向新连接；
+2. **心跳超时与僵尸连接清理**：双向 Ping-Pong 探活，超过 2~3 个心跳周期未收包的连接判定为僵尸连接，服务端强制主动 Close 并清理 Redis 路由表。
+
+---
+
+# 23. 全链路排障、上下文萃取与日志分流规范 (Structured Logging & Log Sinks)
+
+### 23.1 全链路 TraceID 透传
+- 每个外部请求进入网关时，必须分配或提取全局唯一的 `request_id`（推荐采用 **ULID** 或 UUID）；
+- 跨 HTTP、gRPC RPC、WebSocket、异步任务全链路显式透传，所有业务日志必须自动携带 `request_id` 字段。
+
+### 23.2 5 大物理日志文件分流标准
+生产环境严禁将所有日志混合输出到单个日志文件，必须进行物理分流：
+
+| 日志文件名 | 日志级别 | 核心涵盖场景 | 检索与排障场景 |
+| :--- | :---: | :--- | :--- |
+| **`access.log`** | `INFO` | HTTP 请求与响应记录（URL、Method、耗时、状态码、IP） | 网关流量分析与接口响应时延审计 |
+| **`info.log`** | `INFO` | 核心业务状态流转、状态机跃迁、重要事件通知 | 业务主流程追踪与排障定位 |
+| **`error.log`** | `ERROR`| 业务异常、系统捕获的非预期错误、Panic 堆栈 | 线上告警触发与 Bug 溯源 |
+| **`slow.log`** | `WARN` | 超过慢查询阈值（如 SQL 超过 200ms、RPC 超过 500ms）的请求 | 性能瓶颈分析与慢 SQL 调优 |
+| **`stat.log`** | `INFO` | 容器/服务周期性指标统计（QPS、在线连接数、内存水位） | 容量规划与趋势监控 |
+
+### 23.3 敏感字段动态脱敏 (Data Masking)
+- **脱敏红线**：日志打印拦截器必须对敏感数据进行正则掩码脱敏；
+- 严禁明文打印：密码（Password）、鉴权令牌（Token/JWT）、API 密钥（SecretKey）、身份证号、银行卡号、手机号（中间 4 位必须打码）。
+
+---
+
+# 24. Docker 容器化多环境部署与优雅停机 (Docker & Graceful Shutdown)
+
+### 24.1 多阶段通用 Dockerfile 范式
+```dockerfile
+# 阶段 1: 编译构建阶段 (Builder)
+FROM golang:1.22-alpine AS builder
+WORKDIR /app
+RUN apk add --no-cache git make
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /app/bin/service ./service.go
+
+# 阶段 2: 生产运行阶段 (Runner)
+FROM alpine:3.19
+RUN apk --no-cache add ca-certificates tzdata
+ENV TZ=Asia/Shanghai
+WORKDIR /app
+COPY --from=builder /app/bin/service /app/service
+COPY --from=builder /app/etc /app/etc
+# 暴露业务端口与探针端口
+EXPOSE 8080
+ENTRYPOINT ["/app/service", "-f", "etc/service.yaml"]
+```
+
+### 24.2 容器进程 PID 1 与信号透传红线
+- **关键陷阱**：在编写 Docker 入口脚本（如 `entrypoint.sh`）时，**绝对禁止直接使用 `sh -c /app/service`**！这会导致 shell 进程成为 PID 1，从而阻断 Kubernetes 发送的 `SIGTERM` 终止信号，微服务无法优雅停机，最终在超时后被 `SIGKILL` 强杀，导致内存中的消息刷盘失败！
+- **正确规范**：必须使用 `exec` 替换进程映像：
+  ```bash
+  #!/bin/sh
+  # 正确：使用 exec 让 Go 二进制进程直接接管 PID 1
+  exec /app/service -f "$CONFIG_PATH"
+  ```
+
+---
+
+# 25. 多租户系统隔离规范 (Multi-Tenant Systems)
 
 1. **租户凭证自闭环**：租户身份（`tenant_id`）必须从认证 Context 中提取，禁止直接信任前端可被篡改的传参；
 2. **查询条件必带租户过滤**：业务表增删改查 SQL，必须无条件携带 `tenant_id = ?` 约束，严防跨租户越权数据泄漏。
 
 ---
 
-# 23. 性能调优与查询守则 (Performance & SQL Rules)
+# 26. 性能调优与查询守则 (Performance & SQL Rules)
 
 1. **基于数据与 Profiling 优化**：拒绝凭直觉负优化，善用 `go test -bench`、`pprof`；
 2. **数据库性能优先看执行计划**：使用 `EXPLAIN` 检查索引命中（`key`）、扫描行数（`rows`）与临时表使用；
@@ -771,7 +896,7 @@ for _, item := range list {
 
 ---
 
-# 24. 单元测试规范 (Testing)
+# 27. 单元测试规范 (Testing)
 
 - **优先采用表格驱动测试（Table-Driven Tests）**：覆盖正常流、临界边界、非法输入、空指针防御与错误降级；
 - **交付前质量检查命令集**：
@@ -784,7 +909,7 @@ for _, item := range list {
 
 ---
 
-# 25. 代码注释与文档化规范 (Commenting Standards)
+# 28. 代码注释与文档化规范 (Commenting Standards)
 
 1. **包级注释**：每个 package 主文件顶部必须包含中文包级注释，说明职责、导出实体与注意事项；
 2. **结构体与字段注释**：说明实体的业务含义；每个字段编写行尾注释，写明含义、单位、取值范围或约束；
@@ -793,14 +918,14 @@ for _, item := range list {
 
 ---
 
-# 26. 规范代码风格 (Code Style)
+# 29. 规范代码风格 (Code Style)
 
 1. **卫语句（Guard Clauses）优先**：尽早返回，降低代码圈复杂度与嵌套层级；
 2. **拒绝单实现接口滥用**：禁止为了写接口而写单实现接口，仅在存在多实现、跨系统 Mock 或明确架构边界时定义 `interface`。
 
 ---
 
-# 27. AI 常见错误与避坑指南 (Common AI Mistakes to Avoid)
+# 30. AI 常见错误与避坑指南 (Common AI Mistakes to Avoid)
 
 AI 代理在编写 go-zero 代码时必须严防以下 8 大典型错误：
 
@@ -815,7 +940,7 @@ AI 代理在编写 go-zero 代码时必须严防以下 8 大典型错误：
 
 ---
 
-# 28. 交付完成定义 (Definition of Done - DoD)
+# 31. 交付完成定义 (Definition of Done - DoD)
 
 在宣布任务完成前，对照以下清单自检：
 
@@ -835,7 +960,7 @@ AI 代理在编写 go-zero 代码时必须严防以下 8 大典型错误：
 
 ---
 
-# 29. 决策优先级仲裁 (Priority Rules)
+# 32. 决策优先级仲裁 (Priority Rules)
 
 面临方案分歧时，严格按下述优先级裁决：
 
@@ -853,7 +978,7 @@ AI 代理在编写 go-zero 代码时必须严防以下 8 大典型错误：
 
 ---
 
-# 30. 黄金准则 (The Golden Rule)
+# 33. 黄金准则 (The Golden Rule)
 
 针对 go-zero 工程开发，永恒的核心法则只有一条：
 
