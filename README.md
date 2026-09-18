@@ -1,21 +1,25 @@
-# Go-Zero Development Skill (Go 语言与 go-zero 微服务开发技能)
+# Go-Zero Development Skill (Go 语言与 go-zero 生产级开发规范技能)
 
 [![GitHub license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Go-Zero Version](https://img.shields.io/badge/go--zero-1.x-brightgreen.svg)](https://github.com/zeromicro/go-zero)
 [![Target Agents](https://img.shields.io/badge/Agents-Antigravity%20%7C%20Claude%20Code%20%7C%20Cursor%20%7C%20Codex-purple.svg)](#)
 
-本仓库提供了一套专门面向 **Go 语言 + go-zero 微服务架构** 的高质量 Agent Skill 规范与工程知识库，全面涵盖了基于 go-zero 框架进行高性能后端开发时的架构边界、代码生成约束、数据库事务、缓存、并发安全与测试标准。
+本仓库提供了一套面向 **Go 语言 + go-zero 微服务架构** 的企业级 Agent Skill 规范与工程知识库，全面涵盖架构分层、代码生成边界、枚举三层映射、上帝文件拆分、主流标准响应与分页体、异步 Worker 控制面、防吞异常场景规范、按月分表自愈及 Redis Lua 分布式锁标准。
+
+本技能已进行全面**通用化与脱敏处理**，完全兼容主流团队协作与开源社区传播。
 
 ---
 
-## 🌟 核心特性 (Features)
+## 🌟 核心规范亮点 (Highlights)
 
-- **43 大核心规范模块**：从通用规则、项目结构推演、`.api` / `.proto` 契约定义，到 Handler / Logic / ServiceContext / Model 分层落地。
-- **严守代码生成边界**：深度对齐 `goctl` 自动化工作流，严格约束“源头定义优先、生成代码只读”，彻底解决 AI 乱改 generated code 的通病。
-- **全方位基础设施覆盖**：涵盖 GORM / GORM Gen（防注入与零值更新）、MongoDB、Redis 缓存、事务与最终一致性、多租户数据隔离。
-- **并发与安全红线**：强制规定 Goroutine Panic 拦截（`defer-recover`）、循环变量安全、显式 Context 传递与结构化并发。
-- **AI 常见误区与避坑指南 (Mistakes to Avoid)**：详细列举了 AI 编写 go-zero 时的 8 大高频低级错误，并给出明确避坑方案。
-- **闭环行动流 (DoD & Agent Workflow)**：提供完备的 Definition of Done 交付清单与 7 步标准化开发行动闭环。
+- **严守生成代码只读边界**：深度对齐 `goctl` / `Makefile` 工作流，严格约束契约文件优先，禁止人工篡改 `internal/handler/` 与 `*_gen.go`。
+- **拒绝上帝文件 (No God Files)**：单文件建议 200~300 行，超过 500 行强制拆分；一个 API 接口严格对应一个独立 Logic 文件；契约按子域分层拆解。
+- **领域枚举三层映射**：数据库 `tinyint unsigned` $\leftrightarrow$ Go 强类型 Enum $\leftrightarrow$ API JSON 英文语义化字符串，消除硬编码与魔法值。
+- **主流统一响应与标准分页**：主流外层响应包装（`code/msg/data`）与通用轻量标准分页体（`page/page_size/total/total_pages/list`），支持主流与企业定制标准灵活对齐。
+- **禁止 URL Path 传参**：GET 查询一律用 Query，POST/PUT 业务 ID 必须放在 Request Body 中，规范接口语义。
+- **异步 Worker 具备 API 控制面**：拒绝孤立裸脚本，Worker 必须具备 `/worker/health` 探针（K8s Readiness/Liveness）与管理触发端点。
+- **防吞异常五大场景指南**：详尽规定参数转换、主库流转、旁路审计、微服务间调用、网络推流的错误处置准则与正反例代码。
+- **按月分表自愈与 Lua 分布式锁**：单调膨胀表按月动态路由 + Error 1146 建表自愈重试；Redis 分布式锁随机 UUID + Lua 脚本原子释放防误删。
 
 ---
 
@@ -29,7 +33,7 @@
 │       └── SKILL.md                  # 符合多 Skill 规范管理目录结构的技能文件
 ├── .gitignore                        # Git 忽略规则
 ├── LICENSE                           # MIT 开源许可证
-└── README.md                         # 项目中文说明文档
+└── README.md                         # 详尽的中文项目说明与章节导航
 ```
 
 ---
@@ -37,46 +41,46 @@
 ## 🚀 安装与使用 (Installation & Usage)
 
 ### 1. Antigravity IDE / Antigravity CLI
-将本技能克隆或软链接到全局配置目录即可全局自动生效：
-
+全局自动生效：
 ```bash
-# 全局生效路径
 mkdir -p ~/.gemini/config/skills/go-zero-development
 cp SKILL.md ~/.gemini/config/skills/go-zero-development/SKILL.md
 ```
 
-或者作为项目工作区技能（Workspace Skill）：
+作为项目工作区本地技能生效：
 ```bash
 mkdir -p .agents/skills/go-zero-development
 cp SKILL.md .agents/skills/go-zero-development/SKILL.md
 ```
 
 ### 2. 通过 Agent Skills 包管理器安装
-如果使用标准 Agent Skills 工具链：
 ```bash
 npx skills add Garfield247/-go-zero-development
 ```
 
 ### 3. Claude Code / Cursor / Codex
-可直接将 `SKILL.md` 内容复制或引入至项目的 `.cursorrules`、`CLAUDE.md` 或 `AGENTS.md` 中作为系统上下文规则。
+可直接将 `SKILL.md` 内容复制或链接至项目的 `.cursorrules`、`CLAUDE.md` 或 `AGENTS.md` 作为系统上下文指引。
 
 ---
 
 ## 📖 核心章节导航 (Catalogue)
 
-| 章节编号 | 规范名称 | 核心要点 |
+| 章节 | 核心模块 | 规范重点 |
 | :--- | :--- | :--- |
-| **01-02** | 通用规则与项目发现 | 修改前调研、既有代码优先、HTTP & RPC 调用链全景推演 |
-| **03-05** | API / Handler / Logic | API 为单一事实来源、`,string` 精度保护、Thin Handler、Logic 纯粹性 |
-| **06-08** | ServiceContext 与 goctl | 统一单例依赖注入、goctl 生成受控、生成代码只读边界 |
-| **09** | RPC / zrpc 服务通信 | 契约向前兼容、禁止直连跨服务 DB、Protobuf `reserved` 规范 |
-| **10-13** | 存储层与缓存 | MySQL / GORM 零值与事务、MongoDB Context、Redis Key与TTL |
-| **14-17** | 错误、Context 与并发 | `%w` 错误包装、禁止 `_` 忽略、Goroutine Panic 拦截与防闭包捕获 |
-| **18-23** | 兼容性、鉴权与租户 | 接口只增不改、从 Context 安全提取身份、多租户强制隔离 |
-| **24-28** | 性能、查询与测试 | 避免无脑 `SELECT *`、Keyset 深度分页、表格驱动测试与 `-race` 检查 |
-| **29-35** | 重构、依赖、Docker 与 CI | 小步重构、多阶段 Dockerfile、GitLab CI 标准流程、扁平化代码风格 |
-| **36-40** | 避坑指南与 DoD | AI 8 大避坑高频误区、代码检索策略、Git 安全、17 条交付自检清单 |
-| **41-43** | Agent 行为流与黄金准则 | 7 步标准化闭环、决策优先级矩阵、**既有项目代码是第一事实来源** |
+| **01-02** | 通用规则与项目发现 | 调研先行、既有代码优先、HTTP & RPC 调用链推演 |
+| **03** | 全局代码组织与防上帝文件 | **No God Files**、500 行拆分阈值、一个用例一个 Logic 文件、命名双轨分层治理 |
+| **04** | 领域枚举强类型规范 | DB `tinyint` $\leftrightarrow$ Go Enum $\leftrightarrow$ API JSON 字符串三层映射，禁魔法值 |
+| **05** | API 接口与路由设计规范 | `/web-api/` vs `/inner-api/` 隔离、标准动词、**禁止 URL Path 传参**、64 位 ID `,string` |
+| **06** | 主流标准响应与分页体 | `code/msg/data` 外层封装、轻量分页体规范、精准业务错误码体系 |
+| **07-09** | Handler / Logic / ServiceContext | 薄 Handler、Logic 职责单一、单例依赖注入、禁全局可变 DB 变量 |
+| **10-12** | goctl 与 RPC 通信 | 模板化受控生成、生成物只读铁律、Proto 向前兼容与 `reserved` 规范 |
+| **13-16** | 数据库与按月分表自愈 | `utf8mb4_unicode_ci`、GORM 零值与事务、**月度分表自愈重试**、MongoDB 规范 |
+| **17** | Redis 缓存与 Lua 分布式锁 | 命名空间、TTL 约束、**随机 UUID + Lua 脚本原子释放防误删** |
+| **18** | 防吞异常五大场景处置标准 | **Zero Blank Identifier for Error**、五大场景处置标准与典型正反例代码对比 |
+| **19-20** | Context 与并发安全红线 | 显式第一参数传递、**新启动协程必须 defer-recover 拦截 Panic**、防闭包捕获 |
+| **21-22** | 异步 Worker 控制面与租户隔离 | 杜绝孤立裸脚本、**K8s 探针端点**、SQL 强制附带 `tenant_id` 过滤 |
+| **23-26** | 性能、测试与代码注释 | 禁无脑 `SELECT *`、表格驱动测试、包/结构体字段/函数注释规范 |
+| **27-30** | AI 避坑指南、DoD 与黄金准则 | AI 8 大低级错误剖析、14 项完工验收清单、**既有项目代码是第一事实来源** |
 
 ---
 
