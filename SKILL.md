@@ -600,15 +600,38 @@ err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 
 # 17. Redis 缓存与分布式锁标准
 
-### 17.1 命名空间与 Key 命名规范
-Redis Key 必须带全局命名空间前缀：`{project}:{module}:{object}:{identifier}`。
+### 17.1 命名空间与多环境隔离规范 (Environment-Aware Key Namespace)
+
+为了兼容**多套环境共用同一 Redis 实例**（如本地联调与测试共用、灰度演练与正式共用）的隔离需求，Redis Key 的命名空间采用分层分段规范：
+
+#### 标准命名格式
+```text
+{project}:[{env}:]{module}:{object}:{identifier}
+```
+
+#### 常见环境标签 (`env`) 枚举与场景
+- **`local`**：开发者本地机器独立调试，与局域网共用 Redis 实例时防止污染共享数据；
+- **`dev`**：开发联调集成环境；
+- **`test`**：测试环境 / QA 自动化流水线测试；
+- **`stage` / `long`**：预发布长期演练环境、灰度发布节点（Canary）；
+- **`prod`**：正式生产环境。
+
+#### 核心隔离场景与收益
+1. **本地测试共用隔离**：多个开发者本地使用同一个内网 Redis 时，增加 `local` 或开发者标识前缀，杜绝相互覆盖彼此的缓存状态；
+2. **灰度发布与正式共用隔离 (Gray / Canary Isolation)**：在微服务灰度发布演练或长期预发验证（`long` / `stage`）与正式（`prod`）共用底层 Redis 基础设施时，通过环境标签实现数据无损逻辑隔离，互不踩踏；
+3. **独立集群可选省略**：在生产环境拥有物理完全隔离的独立 Redis 集群时，环境标签可选省略（保持 `{project}:{module}:{object}:{identifier}`）；
+4. **工程落地最佳实践（配置化注入）**：
+   - 严禁在业务 Logic 中到处硬编码环境判断（如 `if env == "dev"`）；
+   - 统一在 `config.Config` 中定义 `KeyPrefix: "myproject:dev:"`（通过环境变量或对应配置文件覆盖注入）；
+   - 在 `pkg` 或 `ServiceContext` 中提供统一的 Key 格式化构建函数（如 `BuildKey(module, object, id)`），业务层透明无感调用。
 
 ### 17.2 TTL（生命周期）约束
 - **严禁生成无 TTL 的垃圾缓存**：除少数全局发号序列器外，所有业务缓存必须显式设置过期时间（TTL）；
 - 在线长连接或会话路由 Key 兜底设置 TTL（由心跳周期性 `EXPIRE` 续期）。
 
 ### 17.3 安全分布式锁标准实现 (UUID + Lua)
-- **Lock Key 格式**：`{project}:lock:{business}:{unique_id}`；
+- **Lock Key 格式**：`{project}:[{env}:]lock:{business}:{unique_id}`；
+  - ⚠️ **环境隔离特别警示**：若测试/灰度与共享环境共用 Redis，分布式锁**必须携带环境前缀**，否则测试环境执行加锁会直接死锁线上业务实体！
 - **加锁规则**：必须生成随机 UUID 作为 Value，并附带明确的超时 TTL（防死锁）；
 - **解锁规则**：**必须通过 Lua 脚本原子性校验持有者 UUID 后方可删除**，绝对禁止直接使用裸 `DEL` 导致误删他人持有的锁：
   ```lua
