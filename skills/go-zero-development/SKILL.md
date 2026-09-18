@@ -989,3 +989,47 @@ AI 代理在编写 go-zero 代码时必须严防以下 8 大典型错误：
 - 引入第三方库前，先检索仓库既有依赖；
 - 更改接口契约前，先评估所有调用方影响；
 - 始终保持改动：**最小精准、语义明确、测试覆盖、稳定兼容！**
+
+---
+
+# 6. Bug 分析、排查与调试武器库 (Troubleshooting & Debugging Guide)
+
+在排查 Go 与 go-zero 微服务生产缺陷时，必须遵循 `systematic-debugging` 根因定位 SOP，并熟练运用以下语言专属调试武器库：
+
+### 6.1 并发竞争与协程泄漏排查 (Data Race & Goroutine Leak)
+- **静态竞态检测 (Data Race Detection)**：
+  在运行单测或本地模拟压测时，必须开启 `-race` 标志：
+  ```bash
+  go test -race -v ./...
+  ```
+- **Goroutine 堆栈转储与泄漏诊断**：
+  若服务出现内存缓慢上升、连接不释放，通过引入 `net/http/pprof` 查看堆栈：
+  ```bash
+  # 抓取当前正在运行的 Goroutine 数量与调用栈
+  curl -s http://127.0.0.1:6060/debug/pprof/goroutine?debug=2 | grep -A 10 "goroutine"
+  ```
+  排查重点：检查是否有通道（channel）无接收方导致生产者永不退出，或 `context.WithCancel` 遗漏 `defer cancel()`。
+
+### 6.2 未捕获 Panic 与进程崩溃排查
+- **排查红线**：若进程异常重启或服务中断，第一时间检索启动日志中的 `panic:` 关键字；
+- **定位原则**：检查崩溃 Goroutine 栈顶的第一行业务代码。所有后台 Goroutine 必须使用 `threading.GoSafe` 或手动包装：
+  ```go
+  go func() {
+      defer func() {
+          if r := recover(); r != nil {
+              logx.WithContext(ctx).Errorf("Background Goroutine Recovered: %v, stack: %s", r, debug.Stack())
+          }
+      }()
+      // 执行业务逻辑...
+  }()
+  ```
+
+### 6.3 慢调用与性能瓶颈诊断 (Slow Queries & Bottlenecks)
+- **go-zero 慢日志自动捕获**：
+  go-zero 框架默认会对超过 500ms 的 API/RPC 请求及超过 100ms 的数据库操作输出 `[SLOW-SQL]` 或 `[SLOW-RPC]` 告警日志，直接根据 TraceID 提取上下文全链路；
+- **MySQL 慢查与连接池饱和**：
+  若出现 `context deadline exceeded` 或 `driver: bad connection`，检查连接池 `MaxOpenConns` 与 `MaxIdleConns` 配置，并利用 `EXPLAIN` 分析索引失效原因。
+
+### 6.4 缓存不一致与分布式锁排查
+- **缓存穿透与击穿排查**：检查缓存失效后是否有大量并发直接击垮底层 DB；必须使用 `collection.NewCache` 或带有 SingleFlight 防击穿机制的驱动；
+- **Redis 分布式锁死锁**：检查持有锁的业务逻辑是否发生长耗时阻塞导致锁自动超时释放（需确认看门狗续期或严格的超时上限）。
