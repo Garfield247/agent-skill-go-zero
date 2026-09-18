@@ -60,7 +60,7 @@ cp SKILL.md .agents/skills/go-zero-development/SKILL.md
 
 ### 2. 通过 Agent Skills 包管理器安装
 ```bash
-npx skills add Garfield247/-go-zero-development
+npx skills add Garfield247/go-zero-development
 ```
 
 ### 3. Claude Code / Cursor / Codex
