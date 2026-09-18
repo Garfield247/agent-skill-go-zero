@@ -302,22 +302,115 @@ Model / Database (持久化层)
 | **`page`** | `int` | 当前页码（从 1 开始） |
 | **`page_size`** | `int` | 每页条数（对应请求入参 `page_size`） |
 | **`total`** | `int64` | 满足条件的总记录条数 |
-| **`total_pages`** | `int` | 总页数（$\lceil 	ext{total} / 	ext{page\_size} ceil$） |
+| **`total_pages`** | `int` | 总页数（$\lceil 	ext{total} / 	ext{page\_size} 
+ceil$） |
 | **`list`** | `array` | 当前页实体记录列表数组（无数据时返回空数组 `[]`，严禁返回 `null`） |
 
 > **注**：若当前企业既有项目约定使用 Laravel/Django 风格的深度翻页结构（含 `current_page`, `per_page`, `first_page_url`, `last_page_url` 等导航 URL），**严格按既有项目约定为准**。新建立项推荐上述轻量通用标准。
 
-## 6.3 统一业务异常与错误码体系 (Error Code Standards)
-接口统一返回 `HTTP 200 OK`（或符合网关约定的状态），在响应体内的 `code` 精准定位故障域，**严禁裸抛 HTTP 500**：
+## 6.3 主流统一业务异常与错误码体系 (Mainstream Error Code Standards)
 
-| 错误码 (`code`) | 错误分类 | 涵盖场景 | 默认提示文案 (`msg`) |
+### 6.3.1 核心设计理念
+1. **统一 HTTP 200 响应 + 业务状态码**：客户端接口统一返回 `HTTP 200 OK`（或配合网关协议映射），通过 JSON 响应体内的 `code` 明确表达业务结果，**严禁向前端直接裸抛 HTTP 500**；
+2. **底层 Error 与对外异常解耦**：代码内部使用 Go 标准 `error` 并通过 `%w` 向上冒泡记录完整调用栈；面向前端时，通过全局异常处理器统一转译为带有 `Code` 和安全提示信息的 `CodeError`；
+3. **安全脱敏与防信息泄漏（核心红线）**：严禁向客户端暴露任何底层 SQL 报错（如 `Duplicate entry ...`）、Redis 连接异常、或未捕获的 Panic 堆栈。内部使用 `l.Errorf` 完整记录排障日志，外部一律转译为友好提示。
+
+### 6.3.2 业界主流错误码标准体系
+
+团队可根据工程规模，对齐以下业界最通用的两套错误码标准之一：
+
+#### 方案 A：HTTP 语义映射型标准错误码（RESTful-Aligned，中小微服务首选）
+以最广为人知的 HTTP 语义状态码作为业务 `code` 基准，心智负担极低，前后端协作无缝：
+
+| 错误码 (`code`) | 错误标识 (`Status`) | 涵盖业务场景 | 统一提示文案 (`msg`) 示例 |
 | :---: | :--- | :--- | :--- |
-| **`0`** | **成功 (Success)** | 请求正常执行完成 | `"ok"` / `"success"` |
-| **`400`** | **通用业务错误 (Business Error)** | 业务条件不满足、状态机冲突 | `"业务处理失败"` |
-| **`401 / 403`**| **鉴权/权限拦截 (Auth Error)** | Token 无效、已过期、无权访问 | `"认证失败或已过期"` |
-| **`422 / 600`**| **请求参数校验失败 (Param Error)** | 必填项缺失、格式校验不通过 | `"请求参数不合法"` |
-| **`404 / 800`**| **路由或资源不存在 (Not Found)** | 接口路由不存在、目标实体未找到 | `"请求资源不存在"` |
-| **`500 / 900`**| **服务端内部错误 (Server Error)** | DB/Redis 故障、下游依赖超时 | `"服务暂时不可用，请稍后重试"` (严禁泄漏原始堆栈) |
+| **`0`** | **OK** | 请求正常执行完成 | `"ok"` / `"success"` |
+| **`400`** | **Bad Request** | 业务前置条件不满足、状态机冲突、非法业务操作 | `"业务处理失败"` / `"当前状态不支持该操作"` |
+| **`401`** | **Unauthorized** | 未携带 Token、Token 签名失效、凭证已过期 | `"用户未登录或登录已过期"` |
+| **`403`** | **Forbidden** | 账号已被封禁、无权限访问当前功能、租户越权拦截 | `"无访问权限"` |
+| **`404`** | **Not Found** | 访问的 API 路由不存在、目标查询的业务实体未找到 | `"请求的资源不存在"` |
+| **`409`** | **Conflict** | 资源唯一性冲突（如手机号已注册）、重复提交、幂等冲突 | `"数据已存在或已被占用"` |
+| **`422`** | **Unprocessable Entity** | 入参缺失必填字段、正则校验不匹配、范围非法 | `"请求参数不合法"` |
+| **`429`** | **Too Many Requests** | 触发用户级或接口级频次限流 | `"请求过于频繁，请稍后再试"` |
+| **`500`** | **Internal Server Error**| 数据库底层异常、代码空指针未捕获、系统未知错误 | `"服务开小差了，请稍后重试"` (内部记日志，外发必脱敏) |
+| **`502 / 503`** | **Service Unavailable** | 下游 RPC 微服务调用超时、外部第三方服务不可用 | `"网络服务暂时不可用，请稍后重试"` |
+
+#### 方案 B：五位分段式模块化错误码（Alibaba / CNCF 微服务标准，大型服务推荐）
+格式规范：`[错误来源 1位][模块编号 2位][具体错误 2位]`：
+- **`0`**：成功
+- **`10001 ~ 10099`**（客户端通用错误）：如 `10001` 参数校验失败，`10002` 未登录/Token过期，`10003` 无权限访问，`10004` 资源不存在，`10005` 触发限流；
+- **`20001 ~ 29999`**（业务逻辑错误）：如 `20101` 用户账号已被冻结，`20201` 订单状态流转非法，`20202` 账户余额或库存不足；
+- **`30001 ~ 39999`**（第三方/依赖基础设施错误）：如 `30001` 数据库执行故障，`30002` Redis 缓存故障，`30003` 远程 RPC 微服务超时。
+
+### 6.3.3 go-zero 统一异常拦截落地最佳实践
+
+在工程中统一通过 `pkg/errorx` 封装并在 go-zero 入口注册全局拦截：
+
+```go
+// 1. pkg/errorx/error.go - 基础业务异常定义
+package errorx
+
+type CodeError struct {
+    Code int    `json:"code"`
+    Msg  string `json:"msg"`
+}
+
+func (e *CodeError) Error() string {
+    return e.Msg
+}
+
+func NewCodeError(code int, msg string) error {
+    return &CodeError{Code: code, Msg: msg}
+}
+
+func NewParamError(msg string) error {
+    return NewCodeError(422, msg)
+}
+
+func NewServerError(msg ...string) error {
+    defaultMsg := "服务暂时不可用，请稍后重试"
+    if len(msg) > 0 && msg[0] != "" {
+        defaultMsg = msg[0]
+    }
+    return NewCodeError(500, defaultMsg)
+}
+```
+
+```go
+// 2. 在 main.go 服务启动时注册 go-zero 全局统一错误拦截器
+httpx.SetErrorHandlerCtx(func(ctx context.Context, err error) (int, any) {
+    switch e := err.(type) {
+    case *errorx.CodeError:
+        // 预期的业务 CodeError: 直接按统一结构返回
+        return http.StatusOK, types.BaseResponse{
+            Code: e.Code,
+            Msg:  e.Msg,
+            Data: nil,
+        }
+    default:
+        // 未捕获的原生系统异常/panic: 记录详细上下文堆栈，对外安全脱敏
+        logx.WithContext(ctx).Errorf("[GlobalErrorHandler] unhandled internal error: %+v", err)
+        return http.StatusOK, types.BaseResponse{
+            Code: 500,
+            Msg:  "服务开小差了，请稍后重试",
+            Data: nil,
+        }
+    }
+})
+```
+
+```go
+// 3. 在 Logic 业务层中标准调用
+if req.Name == "" {
+    return nil, errorx.NewParamError("用户名不能为空")
+}
+if user == nil {
+    return nil, errorx.NewCodeError(404, "目标用户不存在")
+}
+if user.Status != enums.UserStatusActive {
+    return nil, errorx.NewCodeError(400, "用户账号已被禁用")
+}
+```
 
 ---
 
