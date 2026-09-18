@@ -1033,3 +1033,26 @@ AI 代理在编写 go-zero 代码时必须严防以下 8 大典型错误：
 ### 6.4 缓存不一致与分布式锁排查
 - **缓存穿透与击穿排查**：检查缓存失效后是否有大量并发直接击垮底层 DB；必须使用 `collection.NewCache` 或带有 SingleFlight 防击穿机制的驱动；
 - **Redis 分布式锁死锁**：检查持有锁的业务逻辑是否发生长耗时阻塞导致锁自动超时释放（需确认看门狗续期或严格的超时上限）。
+
+---
+
+# 7. 微服务高可用进阶：K8s 优雅停机与上帝文件拆分红线 (Advanced Production Guardrails)
+
+### 7.1 K8s 容器化优雅停机标准 (Graceful Shutdown)
+在 Pod 缩容、滚动更新或发布上线时，为避免长连接被强制掐断或处理中的事务中断，必须实现平滑退水：
+```go
+// 注册进程退出信号拦截
+proc.AddShutdownListener(func() {
+    logx.Info("Shutdown signal received, waiting for pending tasks...")
+    // 1. 停止接受新入请求 / 摘流注册中心 (Nacos/Consul/Etcd)
+    // 2. 等待处理中的 HTTP/RPC 请求处理完毕 (超时上限 15s)
+    // 3. 关闭异步 Worker 管道消费
+    // 4. 释放 Redis 连接与 DB 连接池
+    logx.Info("Graceful shutdown completed.")
+})
+```
+
+### 7.2 上帝文件拆分红线 (Anti-God-Files - 核心红线)
+- **单文件行数上限**：任何单一 `logic.go` 或 `model.go` 文件**严禁超过 800 行**；
+- **拆分原则**：
+  若某个 Logic 涉及多个子操作（如订单支付完成后的发短信、加积分、履约推送），必须将子操作拆解至专有的独立 Sub-Logic 或领域服务中，禁止在一个方法中堆砌成百上千行代码。
