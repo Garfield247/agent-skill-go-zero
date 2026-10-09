@@ -213,7 +213,7 @@ Model / Database (持久化层)
 ## 5.1 API 定义为单一事实来源 (Source of Truth)
 
 - 所有 HTTP 接口的输入、输出、路径及路由分组由 `.api` 文件唯一定义；
-- 遵循先改契约文件，再通过 `goctl` / `Makefile` 生成，最后编写 Logic 业务的开发顺序；
+- 遵循先改契约文件，**优先通过统一的 `Makefile`（底层标准化封装 `goctl`）执行生成**（杜绝手敲参数不一致的散装 `goctl` 命令），最后编写 Logic 业务的开发顺序；
 - **严禁手动编辑由 goctl 生成的 Handler / Types / Routes 文件**。
 
 ## 5.2 路由分层与路径规范
