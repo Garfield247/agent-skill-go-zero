@@ -110,9 +110,50 @@ httpx.SetErrorHandlerCtx(func(ctx context.Context, err error) (int, any) {
 - **红线**：严禁在 `Logic A` 中 `new(Logic B)` 或跨包调用同级 Logic；
 - **解法**：共享逻辑必须下沉到子领域 Helper（如 `pkg/domain/...`）、Model 扩展方法或注册进 `ServiceContext`。
 
-### 5.2 🚨 API 契约严禁滥用裸 Map (No-Arbitrary-Map)
-- **红线**：`.api` 文件的 Request 与 Response 中**坚决禁止声明裸 `map[string]any` 或 `map[string]interface{}`**；
-- **要求**：所有接口出入参必须显式定义强类型 Struct，保障契约的单一真理源与客户端 SDK 类型安全。
+### 5.2 🚨 API 契约严禁声明裸 Map 与 String 伪装 JSON 逃避强类型 (No-Map-And-No-Fake-String-JSON)
+- **核心红线**：
+  - 非明确的极端特殊业务需求（如通用反向代理透传、未经解析的第三方原始 Webhook 镜像），**`.api` 文件结构体中坚决禁止声明裸 `map[string]any` 或 `map[string]interface{}`**；
+  - **坚决禁止投机取巧使用 `string` 接收或返回 JSON 字符串**来逃避定义强类型结构体！此举将彻底破坏 Swagger 契约（前端只能看到黑盒 string）、废掉 go-zero 框架校验器（如 `validate` tag）、丧失客户端 SDK 强类型绑定能力。
+- **多态 / 条件子字段（某字段根据另一字段动态变动）的正确设计范式**：
+  - **方案 A（API 契约优先·扁平化可选嵌套结构体，强烈推荐）**：
+    在 `.api` 契约中，将各类型的子字段全部显式声明为独立的可选结构体指针。前端一目了然，Swagger 契约 100% 透明，框架自动完成类型反序列化与校验：
+    ```api
+    type (
+        // SendMessageReq 发送消息请求体
+        SendMessageReq {
+            MsgType  uint8         `json:"msg_type"`            // 消息类型: 1文本, 2图片, 3图文卡片
+            TextMsg  *TextPayload  `json:"text_msg,optional"`   // 文本消息载荷(msg_type=1时必填)
+            ImageMsg *ImagePayload `json:"image_msg,optional"`  // 图片消息载荷(msg_type=2时必填)
+        }
+        TextPayload {
+            Content string `json:"content"` // 文本内容
+        }
+        ImagePayload {
+            Url    string `json:"url"`    // 图片OSS直链
+            Width  int    `json:"width"`  // 图片宽度(px)
+            Height int    `json:"height"` // 图片高度(px)
+        }
+    )
+    ```
+  - **方案 B（协议层统一载荷·`json.RawMessage` 动态分发二次精准反序列化）**：
+    若外部调用方强制约束同名载荷字段 `payload`，**严禁使用裸 `string` 或 `map`**，必须使用 Go 标准库 `json.RawMessage` 延迟解析，并在 Logic 中结合 `switch msg_type` 分支精准 Unmarshal 到对应强类型结构体，杜绝裸 map 类型断言（防 Panic）：
+    ```go
+    type SendMessageReq struct {
+        MsgType uint8           `json:"msg_type"`
+        Payload json.RawMessage `json:"payload"` // 保持原始未解析字节，严禁用 string 接收
+    }
+
+    // 在 Logic 中按类型反序列化到具体结构体，杜绝 map 裸断言
+    switch req.MsgType {
+    case enums.MsgTypeText:
+        var textPayload TextPayload
+        if err := json.Unmarshal(req.Payload, &textPayload); err != nil {
+            return nil, errorx.NewInvalidParamError("文本载荷格式不正确")
+        }
+        // 后续操作完全享有编译期强类型安全与 IDE 补全
+    }
+    ```
+
 
 ### 5.3 🚨 API 路由与结构体字段强制全注释 (Mandatory Route & Field Docstrings)
 - **核心红线**：`.api` 是前后端团队单一真理源 (SSOT)，**坚决禁止声明任何无注释的裸路由与裸字段**！

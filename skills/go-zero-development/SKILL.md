@@ -34,6 +34,9 @@ description: >-
 7. 🚨 **包名遮蔽防范与公共契约归拢 (`pkg/schema`)**：
    - goctl 生成的 DTO 专属收敛于 `internal/types`（只读）；
    - 跨服务/跨模块通用的通用模型（如分页 `PageReq`/`PageResult[T]`、通用值对象、通用过滤）**坚决禁止命名为 `pkg/types`**（防止在 Logic 中被迫引入 `pkgtypes` 别名地狱与认知混乱），必须统一收敛至 **`pkg/schema/`**（或事件通信流收敛至 `pkg/protocol/`）。
+8. 🚨 **结构化数据与契约强类型铁律 (No-Raw-Map & No-Fake-String-JSON)**：
+   - **API 契约禁裸 Map 与 String 伪装**：严禁在 `.api` 结构体中使用 `map[string]any` 或用 `string` 伪装接收 JSON 字符串；多态/条件子字段必须采用扁平可选嵌套结构体或 `json.RawMessage` 二次强类型反序列化；
+   - **禁止裸拼接与黑盒断言**：严禁使用 `fmt.Sprintf` 拼接 JSON；MySQL 8.0 JSON 字段必须通过具名结构体实现 `sql.Scanner / driver.Valuer` 或采用 `datatypes.JSONType[T]` 驱动级自动映射。
 
 ---
 
@@ -74,8 +77,8 @@ Model / Remote RPC (数据存储 / 下游服务)
 
 | 领域模块 | 参考子文档 | 核心涵盖规范 |
 | :--- | :--- | :--- |
-| **API 与契约设计** | [01_api_and_routing.md](references/01_api_and_routing.md) | • 路由版本与动词规范<br>• 统一标准响应体与业务错误码体系<br>• 64 位整型防精度丢失 (`json:",string"`)<br>• RPC / zrpc 跨服务通信向前兼容 |
-| **数据库与持久化** | [02_database_and_gorm.md](references/02_database_and_gorm.md) | • GORM 防注入、零值陷阱与事务闭包<br>• 数据库按月分表规范与冷启动自愈机制<br>• 软删除与唯一键冲突原子复活协议<br>• goctl model 临时目录剥离与缓存一致性 |
+| **API 与契约设计** | [01_api_and_routing.md](references/01_api_and_routing.md) | • 路由版本与动词规范<br>• 统一标准响应体与业务错误码体系<br>• 🚨 严禁裸 Map 与 String 伪装 JSON (多态可选嵌套范式)<br>• 64 位整型防精度丢失 (`json:",string"`)<br>• RPC / zrpc 跨服务通信向前兼容 |
+| **数据库与持久化** | [02_database_and_gorm.md](references/02_database_and_gorm.md) | • GORM 防注入、零值陷阱与事务闭包<br>• 🚨 数据库 JSON 字段强类型治理 (Scanner/Valuer 驱动映射)<br>• 数据库按月分表规范与冷启动自愈机制<br>• 软删除与唯一键冲突原子复活协议<br>• goctl model 临时目录剥离与缓存一致性 |
 | **领域枚举与零值安全** | [08_domain_enums_system.md](references/08_domain_enums_system.md) | • 存储数值/代码强类型/外层语义化三层映射<br>• 二元 0/1 与多元从 1 开始零值安全两分法则<br>• 领域枚举标准六件套与 JSON/SQL 驱动实现<br>• 高内聚业务谓词封装与全系统字典出口 |
 | **高并发缓存与分布式锁** | [03_redis_and_locking.md](references/03_redis_and_locking.md) | • 环境感知 Key 命名空间 (`env:service:biz:id`)<br>• 强 TTL 约束与缓存三灾防范<br>• UUID + Lua 脚本原子安全分布式锁标准 |
 | **异步 Worker 与长连接网关** | [04_workers_and_gateway.md](references/04_workers_and_gateway.md) | • 批量异步削峰双触发刷盘流水线<br>• Redis ZSet 零 MySQL 慢查定时巡检引擎<br>• 单调递增 SeqID 发号器与冷启动自愈<br>• 客户端 3 步 ACK 闭环与互斥踢下线 |

@@ -122,3 +122,54 @@ KEY `idx_is_deleted` (`is_deleted`)
 关于枚举强类型三层映射（MySQL `tinyint unsigned` $\leftrightarrow$ Go 强类型 $\leftrightarrow$ API `string`）、零值安全两分法则与驱动实现，详见专门手册：
 👉 [08_domain_enums_system.md](08_domain_enums_system.md)
 
+---
+
+## 8. 数据库 JSON 字段强类型治理与严禁裸拼接 JSON 规范 (Database JSON Handling)
+
+### 8.1 🚨 绝对红线
+1. **严禁手工裸拼接 JSON 字符串**：坚决禁止使用 `fmt.Sprintf("{\"id\":%d,...}", ...)` 拼接 JSON 写入数据库或响应外层，防止逃逸转义 Bug、破坏性非法 JSON 格式与潜在注入风险；
+2. **严禁在 Model 中将 JSON 列声明为裸 `string` 或 `map[string]any`**：坚决禁止让业务层反序列化成为随处可见的黑盒逻辑与脆弱断言；所有结构化字段必须声明具体的强类型 Go Struct。
+
+### 8.2 生产级标杆范式：`sql.Scanner` 与 `driver.Valuer` 自动驱动映射
+针对 MySQL 8.0 `JSON` 字段定义强类型结构体，将序列化/反序列化彻底内聚于数据层生命周期内：
+
+```go
+package model
+
+import (
+	"database/sql/driver"
+	"encoding/json"
+	"fmt"
+)
+
+// UserSetting 用户个性化配置实体(映射 user_settings 表中的 json 列 config)
+type UserSetting struct {
+	Theme         string `json:"theme"`          // 主题样式: light / dark
+	NotifyEnabled bool   `json:"notify_enabled"` // 是否开启系统桌面通知
+	MaxWindowNum  int    `json:"max_window_num"` // 最大并发会话工作窗口数
+}
+
+// Value 实现 driver.Valuer 契约：将结构体自动序列化后存入 MySQL JSON 字段
+func (u UserSetting) Value() (driver.Value, error) {
+	return json.Marshal(u)
+}
+
+// Scan 实现 sql.Scanner 契约：从 MySQL JSON 列读取时自动反序列化到结构体
+func (u *UserSetting) Scan(value any) error {
+	if value == nil {
+		*u = UserSetting{}
+		return nil
+	}
+	bytes, ok := value.([]byte)
+	if !ok {
+		return fmt.Errorf("failed to scan UserSetting: expected []byte, got %T", value)
+	}
+	return json.Unmarshal(bytes, u)
+}
+```
+
+> 💡 **生态集成提示**：
+> - 若使用 `GORM`，可直接利用官方泛型封装 `datatypes.JSONType[UserSetting]`（同样实现了底层驱动 Scanner/Valuer），开箱即用且零样板代码；
+> - 在 Logic 与 Model 扩展方法中，直接读取 `user.Setting.Theme`，杜绝手动 `json.Unmarshal`。
+
+
