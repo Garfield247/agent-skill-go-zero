@@ -31,6 +31,9 @@ description: >-
    - **单一职责**：一个 API 接口严格对应一个独立 Logic 文件；复杂编排必须拆分子领域服务或 Helper。
 5. **最小化非必要变更 (Minimal Changes)**：恪守原子化修改原则，坚决不做无关重构与大面积全库格式化。
 6. **强化防御性编程与防吞异常 (Zero-Swallow)**：严禁使用 `_` 静默丢弃有价值的 error，落实结构化并发、Panic 拦截与安全分布式锁。
+7. 🚨 **包名遮蔽防范与公共契约归拢 (`pkg/schema`)**：
+   - goctl 生成的 DTO 专属收敛于 `internal/types`（只读）；
+   - 跨服务/跨模块通用的通用模型（如分页 `PageReq`/`PageResult[T]`、通用值对象、通用过滤）**坚决禁止命名为 `pkg/types`**（防止在 Logic 中被迫引入 `pkgtypes` 别名地狱与认知混乱），必须统一收敛至 **`pkg/schema/`**（或事件通信流收敛至 `pkg/protocol/`）。
 
 ---
 

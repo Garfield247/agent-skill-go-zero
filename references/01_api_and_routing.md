@@ -143,3 +143,27 @@ httpx.SetErrorHandlerCtx(func(ctx context.Context, err error) (int, any) {
 ### 5.4 RPC 契约向前兼容
 - **Proto 升级规则**：新增字段使用全新 tag 编号，严禁修改已有字段语义或复用已删除编号；废弃字段显式声明 `reserved`。
 
+### 5.5 🚨 公共契约模型严禁命名为 `pkg/types` 反模式 (No pkg/types Anti-Pattern)
+- **碰撞机理**：go-zero API 服务的 DTO 由 goctl 生成在 `app/{service}/internal/types`。若全局公共结构体包命名为 `pkg/types`，在 Logic 中同时引用时将触发严重的**包名遮蔽（Shadowing）与别名地狱（如被迫写 `import pkgtypes "..."`）**。
+- **强制归拢至 `pkg/schema`**：
+  - 接口专属 DTO：收敛于 `internal/types`（只读）；
+  - 跨服务复用的通用分页、通用值对象、通用检索：统一收敛至 **`pkg/schema/`**（如 `schema.PageReq`, `schema.PageResult[T]`）；
+  - 跨服务 RPC 协议头或异步 MQ 消息载荷：统一收敛至 **`pkg/protocol/`**（如 `protocol.Event`）。
+- **标准无冲突范式**：
+  ```go
+  package logic
+
+  import (
+      "context"
+      "myproject/app/user/internal/types"  // 本服务专属 HTTP DTO
+      "myproject/pkg/schema"              // 全局通用契约模型，天然无别名冲突
+  )
+
+  func (l *GetUserListLogic) GetUserList(req *types.GetUserListReq) (*types.GetUserListResp, error) {
+      pager := schema.NewPage(req.Page, req.PageSize)
+      // ...
+      return &types.GetUserListResp{Total: pager.Total}, nil
+  }
+  ```
+
+
