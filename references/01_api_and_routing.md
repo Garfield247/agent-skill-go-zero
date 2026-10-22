@@ -114,5 +114,32 @@ httpx.SetErrorHandlerCtx(func(ctx context.Context, err error) (int, any) {
 - **红线**：`.api` 文件的 Request 与 Response 中**坚决禁止声明裸 `map[string]any` 或 `map[string]interface{}`**；
 - **要求**：所有接口出入参必须显式定义强类型 Struct，保障契约的单一真理源与客户端 SDK 类型安全。
 
-### 5.3 RPC 契约向前兼容
+### 5.3 🚨 API 路由与结构体字段强制全注释 (Mandatory Route & Field Docstrings)
+- **核心红线**：`.api` 是前后端团队单一真理源 (SSOT)，**坚决禁止声明任何无注释的裸路由与裸字段**！
+- **路由注释规范**：每个接口必须配备 `@doc(summary: "清晰中文业务描述")`，驱动自动生成准确的 Swagger 与 Handler 文档；
+- **结构体字段注释规范**：所有 Request 与 Response 的字段，必须逐行标注中文含义、单位、默认值或枚举取值说明（如 `// 客服状态: 1在线, 2忙碌, 3小休, 4离线`），严禁猜谜；
+- **标准范式**：
+  ```api
+  type (
+      // CreateSessionReq 访客进线会话创建请求体
+      CreateSessionReq {
+          SourceGroupId uint64 `json:"source_group_id"` // 进线消息源组全局雪花ID
+          SourceType    uint8  `json:"source_type"`     // 渠道类型: 1标准IM, 2第三方设备源
+          ClientMeta    string `json:"client_meta"`     // 终端客户端环境元数据(JSON格式: platform/os/browser)
+      }
+  )
+
+  @server(
+      group: user_session
+      prefix: /web-api/v1/user
+  )
+  service chat-api {
+      @doc(summary: "访客发起进线建立会话")
+      @handler CreateSession
+      post /session/create (CreateSessionReq) returns (CreateSessionResp)
+  }
+  ```
+
+### 5.4 RPC 契约向前兼容
 - **Proto 升级规则**：新增字段使用全新 tag 编号，严禁修改已有字段语义或复用已删除编号；废弃字段显式声明 `reserved`。
+
